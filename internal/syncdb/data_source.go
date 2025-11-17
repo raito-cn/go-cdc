@@ -40,6 +40,7 @@ type TxSnapshot struct {
 }
 
 type DataSourceHolder struct {
+	ID     uint32
 	Source DataSource
 	Config *config.DataSourceConfig
 }
@@ -70,9 +71,7 @@ func (b BinlogInitializer) Init(db *sql.DB) (map[string]interface{}, error) {
 		k, v := item[0], item[1]
 		m[k] = v
 	}
-	return map[string]interface{}{
-		"gtids": m,
-	}, nil
+	return m, nil
 }
 
 func InitOrGetDataSource() map[string]*DataSourceHolder {
@@ -80,7 +79,7 @@ func InitOrGetDataSource() map[string]*DataSourceHolder {
 		binlog := BinlogInitializer{}
 		dataSourceConfigs := config.Cnf.DataSourceConfigs
 		DataSourceMap = make(map[string]*DataSourceHolder)
-		for _, cfg := range dataSourceConfigs {
+		for i, cfg := range dataSourceConfigs {
 			fmt.Printf("%s:%d/%s type=%s user=%s params=%v\n", cfg.Host, cfg.Port, cfg.Database, cfg.Type, cfg.User, cfg.Params)
 			if cfg.Type == "mysql" {
 				dsn := db.GetMysqlDsn(cfg)
@@ -101,6 +100,7 @@ func InitOrGetDataSource() map[string]*DataSourceHolder {
 				source.LastBinlogPos = &binlogPos
 				model.GetTableMetaService().SavaOrUpdateCDCMeta(cfg.ID, cfg.Type, binlogPos)
 				DataSourceMap[cfg.ID] = &DataSourceHolder{
+					ID:     uint32(i + 1),
 					Source: source,
 					Config: cfg,
 				}

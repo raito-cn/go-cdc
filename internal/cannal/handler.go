@@ -15,7 +15,7 @@ package cannal
 //)
 //
 //func test(h *Handler) {
-//	cfg := rp.BinlogSyncerConfig{
+//	Cfg := rp.BinlogSyncerConfig{
 //		ServerID: 100, // 任意唯一ID
 //		Flavor:   "mysql",
 //		Host:     "127.0.0.1",
@@ -24,7 +24,7 @@ package cannal
 //		Password: "password",
 //	}
 //
-//	syncer := rp.NewBinlogSyncer(cfg)
+//	syncer := rp.NewBinlogSyncer(Cfg)
 //
 //	// 如果用 GTID 同步
 //	gtidSet, _ := mg.ParseGTIDSet("mysql", "your_gtid_set_string")
