@@ -4,14 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"go-cdc/internal/model"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
 type MysqlDataSource struct {
-	Db            *sql.DB
-	LastBinlogPos *map[string]interface{}
+	Db       *sql.DB
+	LastGTID *model.GTID
 }
 
 func NewMysqlDataSource(db *sql.DB) *MysqlDataSource {
@@ -200,37 +201,32 @@ func (mysql *MysqlDataSource) FetchTableChunk(tx *sql.Tx, schema, table string, 
 	return data, newLastPK, nil
 }
 
-func (mysql *MysqlDataSource) getTableGTID() (map[string]interface{}, error) {
-	query := fmt.Sprintf("SELECT @@server_uuid;")
-	var uuid string
-	if err := mysql.Db.QueryRow(query).Scan(&uuid); err != nil {
-		return nil, err
-	}
-	query = fmt.Sprintf("SELECT @@GLOBAL.gtid_executed;")
+func (mysql *MysqlDataSource) getTableGTID(tx *sql.Tx) (map[string][]string, error) {
+	query := fmt.Sprintf("SELECT @@GLOBAL.gtid_executed;")
 	var str string
-	if err := mysql.Db.QueryRow(query).Scan(&str); err != nil {
+	if err := tx.QueryRow(query).Scan(&str); err != nil {
 		return nil, err
 	}
 	split := strings.Split(strings.Replace(str, "\n", "", -1), ",")
-	m := make(map[string]interface{}, len(split))
+	m := make(map[string][]string, len(split))
 	for _, str := range split {
 		item := strings.Split(str, ":")
-		k, v := item[0], item[1]
+		k, v := item[0], item[1:]
 		m[k] = v
 	}
 	return m, nil
 }
 
 func (mysql *MysqlDataSource) BeginTransactionSnapshot() (*TxSnapshot, error) {
-	gtid, err := mysql.getTableGTID()
-	if err != nil {
-		return nil, err
-	}
 	tx, err := mysql.Db.BeginTx(context.Background(),
 		&sql.TxOptions{
 			ReadOnly:  true,
 			Isolation: sql.LevelRepeatableRead,
 		})
+	if err != nil {
+		return nil, err
+	}
+	gtid, err := mysql.getTableGTID(tx)
 	if err != nil {
 		return nil, err
 	}

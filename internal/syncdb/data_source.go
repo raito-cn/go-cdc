@@ -57,7 +57,7 @@ var (
 // BinlogInitializer 获取全量同步前binlog位置 为增量做准备
 type BinlogInitializer struct{}
 
-func (b BinlogInitializer) Init(db *sql.DB) (map[string]interface{}, error) {
+func (b BinlogInitializer) Init(db *sql.DB) (map[string][]string, error) {
 	query := "show master status"
 	var file, pos, do, ignore, gtid string
 	err := db.QueryRow(query).Scan(&file, &pos, &do, &ignore, &gtid)
@@ -65,10 +65,10 @@ func (b BinlogInitializer) Init(db *sql.DB) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("BinlogInitializer.Init err: %w", err)
 	}
 	split := strings.Split(strings.Replace(gtid, "\n", "", -1), ",")
-	m := make(map[string]interface{}, len(split))
+	m := make(map[string][]string, len(split))
 	for _, str := range split {
 		item := strings.Split(str, ":")
-		k, v := item[0], item[1]
+		k, v := item[0], item[1:]
 		m[k] = v
 	}
 	return m, nil
@@ -93,12 +93,13 @@ func InitOrGetDataSource() map[string]*DataSourceHolder {
 					panic(fmt.Errorf("failed to ping mysql %s:%s: %v", cfg.Host, cfg.Database, err))
 				}
 				source := NewMysqlDataSource(mysqlDB)
-				binlogPos, err := binlog.Init(mysqlDB)
+				gtids, err := binlog.Init(mysqlDB)
 				if err != nil {
 					panic(fmt.Errorf("failed to init mysql %s:%s: %v", cfg.Host, cfg.Database, err))
 				}
-				source.LastBinlogPos = &binlogPos
-				model.GetTableMetaService().SavaOrUpdateCDCMeta(cfg.ID, cfg.Type, binlogPos)
+				gtid := model.ParseGTID(gtids)
+				source.LastGTID = gtid
+				model.GetTableMetaService().SavaOrUpdateCDCMeta(cfg.ID, cfg.Type, gtid)
 				DataSourceMap[cfg.ID] = &DataSourceHolder{
 					ID:     uint32(i + 1),
 					Source: source,

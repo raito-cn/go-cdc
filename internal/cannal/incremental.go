@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go-cdc/internal/log"
+	"go-cdc/internal/model"
 	"go-cdc/internal/syncdb"
 	"strings"
 	"sync"
@@ -21,24 +22,24 @@ type IncrementalService interface {
 	IsRunning() bool
 }
 
-type MysqlIncrementalEventHandler interface {
+type MySQLIncrementalEventHandler interface {
 	OnRow(e *rep.RowsEvent) error
 	OnDDL(e *rep.QueryEvent) error
 	OnGTID(e *rep.GTIDEvent) error
 }
 
-type MysqlIncrementalService struct {
+type MySQLIncrementalService struct {
 	Cfg          *rep.BinlogSyncerConfig
 	Holder       *syncdb.DataSourceHolder
-	EventHandler MysqlIncrementalEventHandler
+	EventHandler MySQLIncrementalEventHandler
 	Running      bool
 	lock         sync.Mutex
-	LastGTID     *map[string]interface{}
+	LastGTID     *model.GTID
 	syncer       *rep.BinlogSyncer
 	streamer     *rep.BinlogStreamer
 }
 
-func NewMysqlIncrementalService(holder *syncdb.DataSourceHolder, eventHandler MysqlIncrementalEventHandler) (IncrementalService, error) {
+func NewMySQLIncrementalService(holder *syncdb.DataSourceHolder) (IncrementalService, error) {
 	source, ok := holder.Source.(*syncdb.MysqlDataSource)
 	if !ok {
 		log.Log.Error("Holder.Source is not *syncdb.MysqlDataSource", zap.Any("Holder", holder))
@@ -53,11 +54,11 @@ func NewMysqlIncrementalService(holder *syncdb.DataSourceHolder, eventHandler My
 		Password: cfg.Password,
 	}
 
-	service := &MysqlIncrementalService{
+	service := &MySQLIncrementalService{
 		Cfg:          binlogCfg,
 		Holder:       holder,
-		EventHandler: eventHandler,
-		LastGTID:     source.LastBinlogPos,
+		EventHandler: &MySQLIncrementalImpl{Holder: holder},
+		LastGTID:     source.LastGTID,
 		Running:      false,
 		lock:         sync.Mutex{},
 	}
@@ -65,10 +66,10 @@ func NewMysqlIncrementalService(holder *syncdb.DataSourceHolder, eventHandler My
 	return service, nil
 }
 
-func (service *MysqlIncrementalService) Run() {
+func (service *MySQLIncrementalService) Run() {
 	service.lock.Lock()
 	if service.Running {
-		log.Log.Warn("MysqlIncrementalService is already running")
+		log.Log.Warn("MySQLIncrementalService is already running")
 		service.lock.Unlock()
 		return
 	}
@@ -78,7 +79,7 @@ func (service *MysqlIncrementalService) Run() {
 }
 
 // Stop 线程安全地停止服务并关闭 syncer
-func (service *MysqlIncrementalService) Stop() {
+func (service *MySQLIncrementalService) Stop() {
 	service.lock.Lock()
 	defer service.lock.Unlock()
 	if !service.Running {
@@ -91,11 +92,11 @@ func (service *MysqlIncrementalService) Stop() {
 	}
 }
 
-func (service *MysqlIncrementalService) IsRunning() bool {
+func (service *MySQLIncrementalService) IsRunning() bool {
 	return service.Running
 }
 
-func (service *MysqlIncrementalService) init() {
+func (service *MySQLIncrementalService) init() {
 	var backoff = 1 * time.Second
 	fallbackTimes := 0
 	allowFallback := func(err error) bool {
@@ -104,10 +105,10 @@ func (service *MysqlIncrementalService) init() {
 		backoff = min(backoff*2, 30*time.Second)
 		fallbackTimes++
 		if fallbackTimes > 10 {
-			log.Log.Error("MysqlIncrementalService.init: get GTID failed 10 times, exit")
+			log.Log.Error("MySQLIncrementalService.init: get GTID failed 10 times, exit")
 			return false
 		} else {
-			log.Log.Error("MysqlIncrementalService.init: get GTID failed, retry again", zap.Error(err))
+			log.Log.Error("MySQLIncrementalService.init: get GTID failed, retry again", zap.Error(err))
 			return true
 		}
 	}
@@ -130,17 +131,12 @@ func (service *MysqlIncrementalService) init() {
 					return
 				}
 			}
-			m := snapshot.Pos.(map[string]interface{})
-			service.LastGTID = &m
-
+			m := snapshot.Pos.(map[string][]string)
+			service.LastGTID = model.ParseGTID(m)
 		}
 
 		// 构建 GTIDSet 字符串
-		str := ""
-		for k, v := range *service.LastGTID {
-			str += fmt.Sprintf("%s:%s,", k, v)
-		}
-		str = strings.TrimSuffix(str, ",")
+		str := service.LastGTID.String()
 
 		GTIDSet, err := mysql.ParseGTIDSet("mysql", str)
 		if err != nil {
@@ -181,7 +177,7 @@ func (service *MysqlIncrementalService) init() {
 	}
 }
 
-func (service *MysqlIncrementalService) loop() {
+func (service *MySQLIncrementalService) loop() {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Log.Error("panic in loop recovered", zap.Any("panic", r))
@@ -192,7 +188,7 @@ func (service *MysqlIncrementalService) loop() {
 	for service.Running {
 		ev, err := service.streamer.GetEvent(ctx)
 		if err != nil {
-			log.Log.Error("MysqlIncrementalService.loop: get event failed", zap.Error(err))
+			log.Log.Error("MySQLIncrementalService.loop: get event failed", zap.Error(err))
 			return
 		}
 		switch e := ev.Event.(type) {
@@ -201,11 +197,9 @@ func (service *MysqlIncrementalService) loop() {
 			gno := e.GNO
 			service.lock.Lock()
 			if service.LastGTID == nil {
-				m := make(map[string]interface{})
-				service.LastGTID = &m
+				service.LastGTID = &model.GTID{}
 			}
-			m := *service.LastGTID
-			m[guuid] = fmt.Sprintf("%d", gno)
+			service.LastGTID.SetGTID(guuid, gno)
 			service.lock.Unlock()
 			if service.EventHandler != nil {
 				if err := service.EventHandler.OnGTID(e); err != nil {

@@ -21,7 +21,7 @@ func main() {
 	holder := syncdb.InitOrGetDataSource()
 
 	_ = cannal.NewFullAmountService(syncdb.DataSourceMap).Run()
-	service, err := cannal.NewMysqlIncrementalService(holder["开发环境"], nil)
+	service, err := cannal.NewMySQLIncrementalService(holder["开发环境"])
 	if err != nil {
 		panic(err)
 	}

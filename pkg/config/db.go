@@ -9,16 +9,17 @@ import (
 )
 
 type DataSourceConfig struct {
-	ID       string                   `toml:"id"`
-	Type     string                   `toml:"type"`
-	Host     string                   `toml:"host"`
-	Port     int                      `toml:"port"`
-	User     string                   `toml:"user"`
-	Password string                   `toml:"password"`
-	Database string                   `toml:"database"`
-	Params   map[string]string        `toml:"params"`
-	Global   *FilterConfig            `toml:"global_filter"`
-	Schemas  map[string]*FilterConfig `toml:"schema_filters"`
+	ID         string                   `toml:"id"`
+	Type       string                   `toml:"type"`
+	Host       string                   `toml:"host"`
+	Port       int                      `toml:"port"`
+	User       string                   `toml:"user"`
+	Password   string                   `toml:"password"`
+	Database   string                   `toml:"database"`
+	Params     map[string]string        `toml:"params"`
+	Global     *FilterConfig            `toml:"global_filter"`
+	Schemas    map[string]*FilterConfig `toml:"schema_filters"`
+	FilterRule *FilterRule
 }
 type FilterConfig struct {
 	IncludeSchemas string `toml:"include_schemas"`
@@ -67,6 +68,7 @@ type FilterPattern struct {
 
 func (cfg *DataSourceConfig) ParseFilterConfig() *FilterRule {
 	rule := &FilterRule{BySchema: make(map[string]*FilterPattern)}
+	cfg.FilterRule = rule
 
 	if cfg.Global != nil {
 		rule.Global = toPattern(cfg.Global)
@@ -74,7 +76,7 @@ func (cfg *DataSourceConfig) ParseFilterConfig() *FilterRule {
 	for schema, fc := range cfg.Schemas {
 		rule.BySchema[schema] = toPattern(fc)
 	}
-	return rule
+	return cfg.FilterRule
 }
 
 func toPattern(fc *FilterConfig) *FilterPattern {

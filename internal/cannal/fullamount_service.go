@@ -140,7 +140,7 @@ func (sr SnapshotReader) readOneTable(holder syncdb.DataSourceHolder, sc, tb str
 		return err
 	}
 	tx := snap.Tx
-	defer model.GetTableMetaService().SaveOrUpdateTableMeta(holder.Config.ID, sc, tb, snap.Pos)
+	defer model.GetTableMetaService().SaveOrUpdateTableMeta(holder.Config.ID, sc, tb, model.ParseGTID(snap.Pos.(map[string][]string)))
 	defer func() {
 		_ = tx.Commit()
 	}()
